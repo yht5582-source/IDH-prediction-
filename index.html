@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HD-AI v0.6｜透析低血壓規則預警</title>
+<title>HD-AI v0.7｜透析低血壓規則預警</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;background:#f3f6fa;color:#1a2a3d}*{box-sizing:border-box}body{margin:0}header{background:#11375e;color:#fff;padding:20px max(16px,calc((100vw - 1100px)/2))}h1{font-size:1.3rem;margin:0 0 5px}header small{color:#d4e7f7}main{max-width:1100px;margin:auto;padding:14px}nav{display:flex;overflow-x:auto;gap:8px;padding:10px 0}button,select,input{font:inherit}button{background:white;border:1px solid #a8bccd;border-radius:9px;min-height:44px;padding:10px 14px;color:#164974;font-weight:600;cursor:pointer;touch-action:manipulation}button.active,button.primary{background:#1769ae;color:white;border-color:#1769ae}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #7fb7fb}label{display:block;font-weight:600;font-size:.93rem}input,select{width:100%;min-height:44px;border:1px solid #b5c5d7;border-radius:8px;padding:9px;margin-top:5px;background:white;color:#172b41;font-size:16px}.panel{background:white;border:1px solid #dae2ea;border-radius:12px;padding:16px;margin:12px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.bed{text-align:left;min-height:93px}.bed strong{display:block;font-size:1.04rem}.muted{color:#617487}.danger{background:#ffebeb;border-color:#c53939;color:#8c1717}.warn{background:#fff6db;border-color:#c99a25;color:#6d4b0a}.note{background:#ecf4ff;border-left:4px solid #2270be;padding:12px;border-radius:6px}.status{padding:10px;background:#e8f2ff;border-radius:7px}section[hidden]{display:none!important}.scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:9px;border-bottom:1px solid #e6ebf0;text-align:left;white-space:nowrap}footer{color:#667889;font-size:13px;padding:22px 0}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>label{min-width:160px;flex:1}#plot svg{width:100%;max-width:760px}ul{padding-left:22px}
 </style></head><body>
-<header><h1>HD-AI｜血液透析中低血壓預警</h1><small>v0.6 · 病人／療程／日期班別／床位分離 · 合成資料 · 規則警示非 AI 機率</small></header>
+<header><h1>HD-AI｜血液透析中低血壓預警</h1><small>v0.7 · 病人／療程／日期班別／床位分離 · 合成資料 · 規則警示非 AI 機率</small></header>
 <main><div id="status" role="status" aria-live="polite" class="status">載入中；如果此訊息不更新，請在 Safari 或 Chrome 開啟。</div>
-<nav aria-label="頁面選單"><button class="active" data-tab="dashboard">床位總覽</button><button data-tab="detail">療程監測</button><button data-tab="can">CAN 評估</button><button data-tab="assign">療程管理</button><button data-tab="guide">資料與說明</button></nav>
+<nav aria-label="頁面選單"><button class="active" data-tab="dashboard">床位總覽</button><button data-tab="detail">療程監測</button><button data-tab="can">CAN 評估</button><button data-tab="assign">療程管理</button><button data-tab="model">XGBoost 建模</button><button data-tab="guide">資料與說明</button></nav>
 <section id="dashboard"><div class="panel"><h2>60 床・依日期／班別顯示</h2><p class="muted">週一三五：三班（第三班＝夜班）；週二四六：兩班；週日預設無常規班。不同班別同床可供不同病人使用。</p>
 <div class="fields"><label>日期<input type="date" id="day"></label><label>班別<select id="shift"></select></label></div>
 <p class="row"><button id="touch">測試手機按鍵</button><button id="reset">重設合成資料</button></p><p id="counter"></p><div id="beds" class="grid"></div></div></section>
@@ -17,8 +17,25 @@
 <section id="assign" hidden><div class="panel"><h2>建立療程／臨時或緊急加做</h2><p class="muted">系統以 Patient ID 串聯歷史、以 Session ID 區隔當次資料；床號是動態佔用位置。緊急療程納入資料庫，但不直接混入常規 XGBoost 訓練集。</p>
 <div class="fields"><label>合成病人代碼<input id="newPatient" value="P001" maxlength="20"></label><label>透析日期<input id="newDay" type="date"></label><label>類型<select id="newType"><option value="routine">常規排程</option><option value="extra">臨時加做</option><option value="urgent">緊急透析</option><option value="inpatient">住院間歇HD</option></select></label><label>班別<select id="newShift"><option value="1">第一班</option><option value="2">第二班</option><option value="3">第三班（夜班）</option><option value="X">非排程時段</option></select></label><label>床位<select id="newBed"></select></label><label>開始時間<input id="newStart" type="time" value="08:00"></label><label>預計結束時間<input id="newEnd" type="time" value="12:00"></label><label>臨時／緊急原因<select id="urgentReason"><option value="none">不適用／未填</option><option value="hyperkalemia">高血鉀</option><option value="pulmonary_edema">肺水腫／容量過負荷</option><option value="uremia">尿毒症相關症狀</option><option value="other">其他急性原因</option></select></label><label>透析前循環狀態<select id="hemo"><option>未知</option><option>穩定</option><option>不穩定</option></select></label><label>升壓劑<select id="pressors"><option>未知</option><option>無</option><option>有</option></select></label></div>
 <p><button class="primary" id="createSession">建立合成療程</button></p><p id="assignStatus"></p><h3>指定日期的療程</h3><div class="scroll"><table><thead><tr><th>療程</th><th>病人</th><th>日期</th><th>班別</th><th>床位</th><th>類型</th><th>時段</th></tr></thead><tbody id="sessionsTable"></tbody></table></div></div></section>
+<section id="model" hidden><div class="panel"><h2>XGBoost v0.7｜研究模型工作站</h2>
+<p class="note"><strong>目前尚未訓練本院臨床模型。</strong>本頁展示已提交的訓練管線及驗證步驟；不會在公開 GitHub Pages 上處理真實病人資料，也不會產生虛構的個人預測機率。</p>
+<h3>模型輸入</h3><div class="grid">
+<div class="panel"><strong>Patient ID</strong><p>連結歷史 IDH、CAN、DM；不當作直接預測特徵。</p></div>
+<div class="panel"><strong>Session ID</strong><p>每次 HD 獨立；僅以當次實際量測時間建立預測點。</p></div>
+<div class="panel"><strong>Routine only</strong><p>第一版僅納入常規門診 HD；緊急／臨時／住院透析另外驗證。</p></div>
+<div class="panel"><strong>60 分鐘 IDH</strong><p>當下 SBP ≥90，預測接下來 60 分鐘「首次有紀錄 SBP &lt;90」。</p></div>
+</div>
+<h3>開發階段</h3>
+<ol><li>資訊室盤點並提供<strong>去識別化、帶完整時間戳記</strong>資料。</li>
+<li>院內環境執行 CSV 結構檢查、事件標記及特徵生成。</li>
+<li>使用 XGBoost 訓練，分開訓練、驗證及時間外測試療程。</li>
+<li>在驗證集進行機率校準，於獨立測試集回報 AUROC、AUPRC、Brier。</li>
+<li>完成臨床／資安／法規審查後，才能評估是否接入院內推論服務。</li></ol>
+<div class="row"><a class="primary" style="display:inline-block;padding:12px;border-radius:8px;background:#1769ae;color:white;text-decoration:none" href="https://github.com/yht5582-source/IDH-prediction-/blob/main/ml/train.py" target="_blank" rel="noopener">查看 XGBoost 訓練程式</a>
+<a style="padding:12px" href="https://github.com/yht5582-source/IDH-prediction-#xgboost-v07-%E5%BB%BA%E6%A8%A1" target="_blank" rel="noopener">查看執行說明</a></div>
+<p class="muted">研究用合成資料可用來檢查程式是否跑通，但其成績不得解讀為真實臨床效能。常規每小時量測、異常加測會造成不規則時間序列與資訊性量測偏差。</p></div></section>
 <section id="guide" hidden><div class="panel"><h2>資料模型與安全規則</h2><p><strong>Patient：</strong>病人代碼、CAN、跨療程歷史 IDH；<strong>Session：</strong>獨立療程識別碼、日期、類型、班別、開始／結束時間；<strong>Bed assignment：</strong>床號及佔用時間；<strong>Measurement：</strong>當次療程與真實時間戳記。</p><p><strong>資料分類：</strong>routine 常規、extra 臨時加做、urgent 緊急、inpatient 住院間歇 HD。週一三五第3班即夜班，週二四六不安排常規第3班；非排程使用 X 班別。夜班跨午夜時應在正式院內系統保存完整日期時間。</p><p><strong>模型範圍：</strong>第一版 XGBoost 只研究常規門診 HD；其他療程保留於病人的完整歷史，需獨立驗證才可外推。</p><p><strong>安全：</strong>本站為公開、合成、暫存在記憶體的教學原型。禁止輸入真實病人代碼、病歷或臨床資料；不顯示經驗證機率，不建議臨床處置，不自動控制透析機。</p></div></section>
-<footer>HD-AI v0.6 · GitHub Pages 合成資料示範 · 非臨床預測工具</footer></main>
+<footer>HD-AI v0.7 · GitHub Pages 合成資料示範 · 非臨床預測工具</footer></main>
 <script>
 (function(){'use strict';
 var $=function(id){return document.getElementById(id)}, date='2026-11-23', current=null, serial=0;
