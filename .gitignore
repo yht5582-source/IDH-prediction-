@@ -1,0 +1,6 @@
+# 合成／院內資料與模型輸出不得提交
+demo/
+local_model_outputs/
+.venv/
+__pycache__/
+*.pyc

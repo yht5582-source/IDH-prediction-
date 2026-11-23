@@ -1,14 +1,18 @@
-name: HD-AI v0.9 CSV importer tests
+name: HD-AI offline regression tests
 on:
   push:
     paths:
       - 'importer.js'
-      - 'tests/importer.test.js'
+      - 'realtime.js'
+      - 'training-center.js'
+      - 'tests/**'
       - '.github/workflows/importer-tests.yml'
   pull_request:
     paths:
       - 'importer.js'
-      - 'tests/importer.test.js'
+      - 'realtime.js'
+      - 'training-center.js'
+      - 'tests/**'
       - '.github/workflows/importer-tests.yml'
 permissions:
   contents: read
@@ -22,3 +26,7 @@ jobs:
           node-version: '22'
       - name: Validate synthetic CSV importer
         run: node tests/importer.test.js
+      - name: Validate synthetic playback controller
+        run: node tests/realtime.test.js
+      - name: Validate training-center readiness audit
+        run: node tests/training-center.test.js

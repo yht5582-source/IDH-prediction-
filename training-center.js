@@ -6,10 +6,11 @@
 function escapeHtml(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]})}
 function minutes(t){var x=String(t||'').match(/^(\d\d):(\d\d)$/);return x?Number(x[1])*60+Number(x[2]):NaN}
 function featureAudit(sessions){
- var counts={sessions:sessions.length,patients:new Set(),days:new Set(),routine:0,excluded:0,measurements:0,windows:0,positiveWindows:0,idhs:0,unknownCAN:0,duplicateIds:0,orphans:0,invalidTime:0,invalidBP:0};
+ sessions=sessions||[];
+ var counts={sessions:sessions.length,patients:new Set(),days:new Set(),routine:0,excluded:0,measurements:0,windows:0,positiveWindows:0,idhs:0,unknownCAN:0,duplicateIds:0,orphans:0,invalidTime:0,invalidBP:0,missingIds:0,noBP:0};
  var ids=new Set(),warnings=[];
- (sessions||[]).forEach(function(s){
-  if(!s||!s.id){counts.duplicateIds++;return}
+ sessions.forEach(function(s){
+  if(!s||!s.id){counts.missingIds++;return}
   if(ids.has(s.id))counts.duplicateIds++;ids.add(s.id);
   counts.patients.add(s.patientId);
   counts.days.add(s.date);
@@ -18,6 +19,7 @@ function featureAudit(sessions){
   var values=(s.values||[]).slice().sort(function(a,b){return minutes(a.time)-minutes(b.time)}),start=minutes(s.start),end=minutes(s.end);
   if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start){counts.invalidTime++;return}
   counts.measurements+=values.length;
+  if(!values.length)counts.noBP++;
   if(values.some(function(v){return !Number.isFinite(minutes(v.time))||minutes(v.time)<start||minutes(v.time)>end}))counts.invalidTime++;
   if(values.some(function(v){return !Number.isFinite(Number(v.sbp))||Number(v.sbp)<40||Number(v.sbp)>280}))counts.invalidBP++;
   var firstLow=values.find(function(v){return Number(v.sbp)<90});
@@ -25,14 +27,15 @@ function featureAudit(sessions){
   for(var i=0;i<values.length;i++){
    var m=values[i],t=minutes(m.time);
    if(!Number.isFinite(t)||!Number.isFinite(Number(m.sbp))||Number(m.sbp)<90)break;
-   if(t+60>end)continue;
-   if(t+60<start)continue;
+   if(t+60>end)continue; /* 觀測期不足 60 分鐘：不當成陰性 */
    counts.windows++;
    if(firstLow&&minutes(firstLow.time)>t&&minutes(firstLow.time)<=t+60)counts.positiveWindows++;
   }
  });
  counts.patients=counts.patients.size;counts.days=counts.days.size;
  if(counts.duplicateIds)warnings.push('Session ID 重複，須修正後才可建模');
+ if(counts.missingIds)warnings.push('有 '+counts.missingIds+' 筆療程缺少 Session ID');
+ if(counts.noBP)warnings.push('有 '+counts.noBP+' 筆常規療程沒有任何血壓量測');
  if(counts.invalidTime||counts.invalidBP)warnings.push('時間戳記或血壓不合規');
  if(counts.routine<100)warnings.push('常規透析療程不足 100 筆（僅作示範預檢門檻，非臨床樣本數計算）');
  if(counts.days<30)warnings.push('涵蓋日期不足 30 天，無法進行有代表性的時間外驗證');
@@ -45,7 +48,7 @@ function featureAudit(sessions){
 function trainingPlan(settings,audit){
  return {
   protocol:'HD-AI-XGB-research-v1',
-  version:'1.1',
+  version:'1.1.1',
   generated_at:new Date().toISOString(),
   purpose:'RESEARCH_ONLY',
   data_source:'hospital_secure_server_preapproved_dataset',
@@ -65,14 +68,16 @@ function trainingPlan(settings,audit){
 function setup(api){
  var $=function(id){return document.getElementById(id)},audit=null;
  function report(){
+  /* 回放中的量測被截到模擬時間，統計會偏少：先擋下 */
+  if(api.isPlaying&&api.isPlaying()){api.message('合成回放進行中：請先到床位總覽按「重設回放」再執行預檢',true);$('mlAuditResult').textContent='合成回放進行中，量測只顯示到模擬時間；請先重設回放再預檢。';return}
   audit=featureAudit(api.getSessions());
   var c=audit.counts;
   $('mlAuditCards').innerHTML=[
    ['總療程',c.sessions],['常規門診',c.routine],['獨立病人',c.patients],['日期數',c.days],
    ['血壓量測',c.measurements],['合格預測點',c.windows],['陽性預測點',c.positiveWindows],['有紀錄IDH的常規療程',c.idhs]
-  ].map(function(x){return '<div class="panel"><strong>'+x[0]+'</strong><h2>'+x[1]+'</h2></div>'}).join('');
+  ].map(function(x){return '<div class="panel">'+escapeHtml(x[0])+'<b>'+escapeHtml(x[1])+'</b></div>'}).join('');
   $('mlAuditResult').innerHTML='<h3>合成資料預檢已完成</h3><p>這些是資料筆數，不是模型效能；不表示模型已訓練。</p><ul>'+audit.warnings.map(function(x){return '<li>'+escapeHtml(x)+'</li>'}).join('')+'</ul>';
-  $('mlPlan').disabled=false;
+  $('mlPlan').disabled=false;$('mlDownload').disabled=true;$('mlPlanResult').textContent='尚未產生訓練計畫。';
   api.message('合成資料預檢完成；公開網頁不會執行模型訓練');
  }
  $('mlAudit').addEventListener('click',report);
@@ -94,7 +99,8 @@ function setup(api){
  });
  $('mlPlan').disabled=true;$('mlDownload').disabled=true;
  $('mlTrainResult').textContent='目前狀態：未連接院內訓練伺服器／模型未訓練';
- return {invalidate:function(){audit=null;$('mlAuditResult').textContent='資料已更新，請重新執行預檢';$('mlPlan').disabled=true;$('mlDownload').disabled=true;$('mlAuditCards').innerHTML='';$('mlPlanResult').textContent=''}};
+ /* 看板資料一變動就讓舊的預檢與計畫失效；尚未預檢過則不動作 */
+ return {invalidate:function(){if(!audit)return;audit=null;$('mlAuditResult').textContent='資料已更新，請重新執行預檢';$('mlPlan').disabled=true;$('mlDownload').disabled=true;$('mlAuditCards').innerHTML='';$('mlPlanResult').textContent='尚未產生訓練計畫。'}};
 }
 root.HDAITrainingCenter={setup:setup,featureAudit:featureAudit,trainingPlan:trainingPlan};
-})(window);
+})(typeof window!=='undefined'?window:globalThis);
